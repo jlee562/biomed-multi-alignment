@@ -1,0 +1,106 @@
+---
+# MAMMAL Drug-Target Binding Affinity Screen on Habana Gaudi
+#
+# Predicts binding affinity (pKd) between a target protein (amino-acid sequence)
+# and a panel of candidate drugs (SMILES strings) using IBM's MAMMAL foundation
+# model fine-tuned on BindingDB. This is a real early-drug-discovery workflow:
+# rapidly triage hundreds of candidate molecules in silico before committing to
+# expensive wet-lab binding assays.
+#
+# Inputs are passed as env vars (see ConfigMap below). pKd interpretation:
+#   pKd >= 7  -> Kd <= 100 nM   (strong binder, potential hit)
+#   pKd  6-7  ->   1-100 uM     (moderate)
+#   pKd  5-6  ->  10-100 uM     (weak)
+#   pKd <  5  ->   > 10 uM      (non-binder)
+#
+# Default demo screens five FDA-approved EGFR inhibitors (Erlotinib, Gefitinib,
+# Lapatinib, Osimertinib, Afatinib) plus Aspirin (negative control) against the
+# EGFR kinase domain — a clinically-validated cancer target. A well-trained
+# model should rank the EGFR drugs well above aspirin.
+#
+# This template does not require input files. Inputs are passed inline as env
+# vars, and the job writes machine-readable results to /data/output/ so a
+# platform-level uploader can persist them after the run.
+#
+# Usage:
+#   kubectl apply -f mammal-dti-screen.yaml
+#   kubectl logs -f job/{{JOB_NAME}}
+#
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: {{JOB_NAME}}
+  labels:
+    app: {{JOB_NAME}}
+    workload-type: mammal-dti
+spec:
+  backoffLimit: 0
+  ttlSecondsAfterFinished: 86400
+  template:
+    metadata:
+      labels:
+        app: {{JOB_NAME}}
+        workload-type: mammal-dti
+    spec:
+      restartPolicy: Never
+      runtimeClassName: habana
+      hostIPC: true
+      nodeSelector:
+        habana.ai/gaudi: present
+      tolerations:
+        - key: habana
+          operator: Exists
+          effect: NoSchedule
+        - key: habana
+          operator: Exists
+          effect: NoExecute
+      securityContext:
+        runAsNonRoot: false
+        runAsUser: 0
+      containers:
+        - name: mammal-dti
+          image: dcx-registry.rc.asu.edu/mammal-poc:latest
+          imagePullPolicy: Always
+          command: ["python", "/workspace/dti_screen.py"]
+          env:
+            - name: PT_HPU_LAZY_MODE
+              value: "1"
+            - name: HF_HOME
+              value: /workspace/.cache/huggingface
+            - name: TRANSFORMERS_CACHE
+              value: /workspace/.cache/huggingface
+            - name: TARGET_NAME
+              value: '{{TARGET_NAME}}'
+            - name: TARGET_SEQ
+              value: '{{TARGET_SEQ}}'
+            - name: DRUG_LIST
+              value: '{{DRUG_LIST}}'
+            - name: OUTPUT_DIR
+              value: /data/output
+          resources:
+            requests:
+              cpu: "{{CPU}}"
+              memory: "{{MEMORY}}"
+              habana.ai/gaudi: "1"
+            limits:
+              cpu: "{{CPU}}"
+              memory: "{{MEMORY}}"
+              habana.ai/gaudi: "1"
+          volumeMounts:
+            - name: data
+              mountPath: /data
+            - name: hf-cache
+              mountPath: /workspace/.cache
+            - name: shm
+              mountPath: /dev/shm
+      volumes:
+        - name: data
+          emptyDir:
+            sizeLimit: 1Gi
+        - name: hf-cache
+          emptyDir:
+            sizeLimit: 20Gi
+        - name: shm
+          emptyDir:
+            medium: Memory
+            sizeLimit: 4Gi

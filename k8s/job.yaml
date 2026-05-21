@@ -1,0 +1,67 @@
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: mammal-poc
+---
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: mammal-poc-inference
+  namespace: mammal-poc
+spec:
+  backoffLimit: 0
+  ttlSecondsAfterFinished: 86400
+  template:
+    metadata:
+      labels:
+        app: mammal-poc
+    spec:
+      restartPolicy: Never
+      runtimeClassName: habana
+      hostIPC: true
+      nodeSelector:
+        habana.ai/gaudi: present
+      tolerations:
+        - key: habana
+          operator: Exists
+          effect: NoSchedule
+        - key: habana
+          operator: Exists
+          effect: NoExecute
+      securityContext:
+        runAsNonRoot: false
+        runAsUser: 0
+      containers:
+        - name: mammal
+          image: dcx-registry.rc.asu.edu/mammal-poc:latest
+          imagePullPolicy: Always
+          command: ["python", "/workspace/run_poc.py"]
+          env:
+            - name: PT_HPU_LAZY_MODE
+              value: "1"
+            - name: HF_HOME
+              value: /workspace/.cache/huggingface
+            - name: TRANSFORMERS_CACHE
+              value: /workspace/.cache/huggingface
+          resources:
+            requests:
+              cpu: "4"
+              memory: 16Gi
+              habana.ai/gaudi: "1"
+            limits:
+              cpu: "8"
+              memory: 32Gi
+              habana.ai/gaudi: "1"
+          volumeMounts:
+            - name: hf-cache
+              mountPath: /workspace/.cache
+            - name: shm
+              mountPath: /dev/shm
+      volumes:
+        - name: hf-cache
+          emptyDir:
+            sizeLimit: 20Gi
+        - name: shm
+          emptyDir:
+            medium: Memory
+            sizeLimit: 4Gi
